@@ -76,6 +76,27 @@ enum class ghst_parser_state_t : uint8_t {
 	synced
 };
 
+enum class ghst_chan_expected_num_id : uint8_t {
+	expected_chan_num_id_4 = 0b000U,
+	expected_chan_num_id_8 = 0b001U,
+	expected_chan_num_id_12 = 0b011U,
+	expected_chan_num_id_16 = 0b111U
+};
+
+enum class ghst_chan_received_num_id : uint8_t {
+	received_chan_num_id_4 = 0b000U,
+	received_chan_num_id_8 = 0b001U,
+	received_chan_num_id_12 = 0b010U,
+	received_chan_num_id_16 = 0b100U
+};
+
+enum class ghst_chan_received_num : uint16_t {
+	received_chan_num_4 = 4U,
+	received_chan_num_8 = 8U,
+	received_chan_num_12 = 12U,
+	received_chan_num_16 = 16U
+};
+
 // only RSSI frame contains value of RSSI, if it is not received, send last received RSSI
 static int8_t ghst_rssi = -1;
 
@@ -84,11 +105,13 @@ static uint32_t current_frame_position = 0U;
 static ghst_parser_state_t parser_state = ghst_parser_state_t::unsynced;
 
 static uint16_t prev_rc_vals[GHST_MAX_NUM_CHANNELS];
+static uint8_t received_channels_id = 0U;
+static uint8_t expected_channels_id = 0U;
 
 /**
  * parse the current ghst_frame buffer
  */
-static bool ghst_parse_buffer(uint16_t *values, int8_t *rssi, uint16_t *num_values, uint16_t max_channels);
+static bool ghst_parse_buffer(uint16_t *values, int8_t *rssi, uint16_t &num_values, uint16_t max_channels);
 
 int ghst_config(int uart_fd)
 {
@@ -113,7 +136,7 @@ static uint16_t convert_channel_value(unsigned chan_value);
 
 
 bool ghst_parse(const uint64_t now, const uint8_t *frame, unsigned len, uint16_t *values,
-		int8_t *rssi, uint16_t *num_values, uint16_t max_channels)
+		int8_t *rssi, uint16_t &num_values, uint16_t max_channels)
 {
 	bool success = false;
 	uint8_t *ghst_frame_ptr = (uint8_t *)&ghst_frame;
@@ -181,9 +204,12 @@ static uint16_t convert_channel_value(unsigned int chan_value)
 	return converted_chan_value;
 }
 
-static bool ghst_parse_buffer(uint16_t *values, int8_t *rssi, uint16_t *num_values, uint16_t max_channels)
+static bool ghst_parse_buffer(uint16_t *values, int8_t *rssi, uint16_t &num_values, uint16_t max_channels)
 {
 	uint8_t *ghst_frame_ptr = (uint8_t *)&ghst_frame;
+	uint16_t max_available_chan = MIN(max_channels, GHST_MAX_NUM_CHANNELS);
+	uint16_t expected_chan_num;
+	bool ret = false;
 
 	if (parser_state == ghst_parser_state_t::unsynced) {
 		// there is no sync yet, try to find an RC packet by searching for a matching frame length and type
@@ -245,8 +271,6 @@ static bool ghst_parse_buffer(uint16_t *values, int8_t *rssi, uint16_t *num_valu
 		return false;
 	}
 
-	bool ret = false;
-
 	// now we have the full frame
 
 	if ((ghst_frame.type >= static_cast<uint8_t>(ghstFrameType::frameTypeFirst)) &&
@@ -256,43 +280,51 @@ static bool ghst_parse_buffer(uint16_t *values, int8_t *rssi, uint16_t *num_valu
 
 		if (crc == ghst_frame_CRC(ghst_frame)) {
 			const ghstPayloadData_t *const rcChannels = (ghstPayloadData_t *)&ghst_frame.payload;
-			*num_values = MIN(max_channels, GHST_MAX_NUM_CHANNELS);
 
 			// all frames contain data from chan1to4
-			if (max_channels > 0U) { values[0] = convert_channel_value(rcChannels->chan1to4.chan1 >> 1U); }
+			if (max_available_chan > 0U) { values[0] = convert_channel_value(rcChannels->chan1to4.chan1 >> 1U); }
 
-			if (max_channels > 1U) { values[1] = convert_channel_value(rcChannels->chan1to4.chan2 >> 1U); }
+			if (max_available_chan > 1U) { values[1] = convert_channel_value(rcChannels->chan1to4.chan2 >> 1U); }
 
-			if (max_channels > 2U) { values[2] = convert_channel_value(rcChannels->chan1to4.chan3 >> 1U); }
+			if (max_available_chan > 2U) { values[2] = convert_channel_value(rcChannels->chan1to4.chan3 >> 1U); }
 
-			if (max_channels > 3U) { values[3] = convert_channel_value(rcChannels->chan1to4.chan4 >> 1U); }
+			if (max_available_chan > 3U) { values[3] = convert_channel_value(rcChannels->chan1to4.chan4 >> 1U); }
 
 			if (ghst_frame.type == static_cast<uint8_t>(ghstFrameType::frameType5to8)) {
-				if (max_channels > 4U) { values[4] = convert_channel_value(rcChannels->chanA << 3U); }
+				received_channels_id |= static_cast<uint8_t>(ghst_chan_received_num_id::received_chan_num_id_8);
+				expected_channels_id |= static_cast<uint8_t>(ghst_chan_expected_num_id::expected_chan_num_id_8);
 
-				if (max_channels > 5U) { values[5] = convert_channel_value(rcChannels->chanB << 3U); }
+				if (max_available_chan > 4U) { values[4] = convert_channel_value(rcChannels->chanA << 3U); }
 
-				if (max_channels > 6U) { values[6] = convert_channel_value(rcChannels->chanC << 3U); }
+				if (max_available_chan > 5U) { values[5] = convert_channel_value(rcChannels->chanB << 3U); }
 
-				if (max_channels > 7U) { values[7] = convert_channel_value(rcChannels->chanD << 3U); }
+				if (max_available_chan > 6U) { values[6] = convert_channel_value(rcChannels->chanC << 3U); }
+
+				if (max_available_chan > 7U) { values[7] = convert_channel_value(rcChannels->chanD << 3U); }
 
 			} else if (ghst_frame.type == static_cast<uint8_t>(ghstFrameType::frameType9to12)) {
-				if (max_channels > 8U) { values[8] = convert_channel_value(rcChannels->chanA << 3U); }
+				received_channels_id |= static_cast<uint8_t>(ghst_chan_received_num_id::received_chan_num_id_12);
+				expected_channels_id |= static_cast<uint8_t>(ghst_chan_expected_num_id::expected_chan_num_id_12);
 
-				if (max_channels > 9U) { values[9] = convert_channel_value(rcChannels->chanB << 3U); }
+				if (max_available_chan > 8U) { values[8] = convert_channel_value(rcChannels->chanA << 3U); }
 
-				if (max_channels > 10U) { values[10] = convert_channel_value(rcChannels->chanC << 3U); }
+				if (max_available_chan > 9U) { values[9] = convert_channel_value(rcChannels->chanB << 3U); }
 
-				if (max_channels > 11U) { values[11] = convert_channel_value(rcChannels->chanD << 3U); }
+				if (max_available_chan > 10U) { values[10] = convert_channel_value(rcChannels->chanC << 3U); }
+
+				if (max_available_chan > 11U) { values[11] = convert_channel_value(rcChannels->chanD << 3U); }
 
 			} else if (ghst_frame.type == static_cast<uint8_t>(ghstFrameType::frameType13to16)) {
-				if (max_channels > 12U) { values[12] = convert_channel_value(rcChannels->chanA << 3U); }
+				received_channels_id |= static_cast<uint8_t>(ghst_chan_received_num_id::received_chan_num_id_16);
+				expected_channels_id |= static_cast<uint8_t>(ghst_chan_expected_num_id::expected_chan_num_id_16);
 
-				if (max_channels > 13U) { values[13] = convert_channel_value(rcChannels->chanB << 3U); }
+				if (max_available_chan > 12U) { values[12] = convert_channel_value(rcChannels->chanA << 3U); }
 
-				if (max_channels > 14U) { values[14] = convert_channel_value(rcChannels->chanC << 3U); }
+				if (max_available_chan > 13U) { values[13] = convert_channel_value(rcChannels->chanB << 3U); }
 
-				if (max_channels > 15U) { values[15] = convert_channel_value(rcChannels->chanD << 3U); }
+				if (max_available_chan > 14U) { values[14] = convert_channel_value(rcChannels->chanC << 3U); }
+
+				if (max_available_chan > 15U) { values[15] = convert_channel_value(rcChannels->chanD << 3U); }
 
 			} else if (ghst_frame.type == static_cast<uint8_t>(ghstFrameType::frameTypeRssi)) {
 				const ghstPayloadRssi_t *const rssiValues = (ghstPayloadRssi_t *)&ghst_frame.payload;
@@ -303,13 +335,28 @@ static bool ghst_parse_buffer(uint16_t *values, int8_t *rssi, uint16_t *num_valu
 				GHST_DEBUG("Frame type: %u", ghst_frame.type);
 			}
 
+			if (received_channels_id == static_cast<uint8_t>(ghst_chan_expected_num_id::expected_chan_num_id_8)) {
+				expected_chan_num = static_cast<uint16_t>(ghst_chan_received_num::received_chan_num_8);
+
+			} else if (received_channels_id == static_cast<uint8_t>(ghst_chan_expected_num_id::expected_chan_num_id_12)) {
+				expected_chan_num = static_cast<uint16_t>(ghst_chan_received_num::received_chan_num_12);
+
+			} else if (received_channels_id == static_cast<uint8_t>(ghst_chan_expected_num_id::expected_chan_num_id_16)) {
+				expected_chan_num = static_cast<uint16_t>(ghst_chan_received_num::received_chan_num_16);
+
+			} else {
+				expected_chan_num = static_cast<uint16_t>(ghst_chan_received_num::received_chan_num_4);
+			}
+
+			num_values = MIN(expected_chan_num, max_available_chan);
+
 			*rssi = ghst_rssi;
 
 			memcpy(prev_rc_vals, values, sizeof(uint16_t) * GHST_MAX_NUM_CHANNELS);
 
 			GHST_VERBOSE("Got Channels");
 
-			ret = true;
+			ret = (received_channels_id == expected_channels_id);
 
 		} else {
 			GHST_DEBUG("CRC check failed");

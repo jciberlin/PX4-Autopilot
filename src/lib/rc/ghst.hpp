@@ -125,7 +125,7 @@ __EXPORT int ghst_config(int uart_fd);
  * @return true if channels successfully decoded
  */
 __EXPORT bool ghst_parse(const uint64_t now, const uint8_t *frame, unsigned len, uint16_t *values,
-			 int8_t *rssi, uint16_t *num_values, uint16_t max_channels);
+			 int8_t *rssi, uint16_t &num_values, uint16_t max_channels);
 
 
 /**

@@ -647,7 +647,7 @@ void RCInput::Run()
 				if (newBytes > 0) {
 					int8_t ghst_rssi = -1;
 					rc_updated = ghst_parse(cycle_timestamp, &_rcs_buf[0], newBytes, &_raw_rc_values[0], &ghst_rssi,
-								&_raw_rc_count, input_rc_s::RC_INPUT_MAX_CHANNELS);
+								_raw_rc_count, input_rc_s::RC_INPUT_MAX_CHANNELS);
 
 					if (rc_updated) {
 						// we have a new GHST frame. Publish it.
